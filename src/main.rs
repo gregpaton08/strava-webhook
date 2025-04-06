@@ -3,7 +3,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use chrono::{DateTime, Weekday};
+use chrono::{DateTime, Weekday,Datelike};
 use reqwest;
 use serde::Deserialize;
 use sqlx::sqlite::SqlitePool;
@@ -44,12 +44,14 @@ async fn process_activity(
     pool: SqlitePool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Check if the activity was already processed.
+    let activity_id = activity_id as i64;
     let rec = sqlx::query!(
         "SELECT id FROM processed_activities WHERE activity_id = ?",
-        activity_id as i64
+        activity_id
     )
     .fetch_optional(&pool)
     .await?;
+
     if rec.is_some() {
         println!("Activity {} already processed.", activity_id);
         return Ok(());
@@ -74,7 +76,7 @@ async fn process_activity(
 
     // Parse the local start date and check if it's a weekday.
     let dt = DateTime::parse_from_rfc3339(&activity.start_date_local)?;
-    if matches!(dt.weekday(), Weekday::Sat | Weekday::Sun) {
+    if matches!(dt.date().weekday(), Weekday::Sat | Weekday::Sun) {
         println!("Activity {} occurred on a weekend.", activity_id);
         return Ok(());
     }
@@ -105,9 +107,9 @@ async fn process_activity(
     if update_res.status().is_success() {
         println!("Activity {} updated successfully.", activity_id);
         // Record the processed activity.
-        sqlx::query!(
+        let result = sqlx::query!(
             "INSERT INTO processed_activities (activity_id) VALUES (?)",
-            activity_id as i64
+            activity_id
         )
         .execute(&pool)
         .await?;
@@ -147,7 +149,8 @@ async fn webhook_handler(
             });
         }
     }
-    "OK"
+    
+    "OK".into()
 }
 
 #[tokio::main]
@@ -170,13 +173,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build the axum application.
     let app = Router::new()
-        .route("/webhook", get(webhook_handler).post(webhook_handler))
-        .layer(Extension(pool));
+    // .route("/webhook", get(webhook_handler))
+    // .route("/webhook", get(webhook_handler).post(webhook_handler))
+    .layer(Extension(pool));
 
     // Start the server on port 3000.
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     println!("Listening on {}", addr);
-    axum::Server::bind(&addr)
+    axum_server::bind(addr)
         .serve(app.into_make_service())
         .await?;
     Ok(())
